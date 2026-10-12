@@ -11,7 +11,6 @@ if not BOT_TOKEN or not CHAT_ID:
     print("Error: BOT_TOKEN and CHAT_ID env vars not set!")
     exit(1)
 
-# لیست ۵۰ ارز برتر (فرمت KCEX با آندرلاین)
 SYMBOLS = [
     "BTC_USDT", "ETH_USDT", "BNB_USDT", "XRP_USDT", "SOL_USDT",
     "TRX_USDT", "DOGE_USDT", "ADA_USDT", "LINK_USDT", "XLM_USDT",
@@ -44,12 +43,10 @@ def send_telegram_message(message):
 
 
 def get_klines(symbol, interval, limit=100):
-    """دریافت کندل‌ها از KCEX API"""
+    """دریافت کندل‌ها از KCEX API (ساختار ستونی)"""
     url = f"https://www.kcex.com/fapi/v1/contract/kline/{symbol}"
     
-    # KCEX از start و end استفاده می‌کنه، پس محاسبه می‌کنیم
     end_time = int(time.time())
-    # برای 100 کندل 5 دقیقه‌ای، حدود 8.5 ساعت قبل
     start_time = end_time - (limit * 5 * 60)
     
     params = {
@@ -60,37 +57,34 @@ def get_klines(symbol, interval, limit=100):
     }
     
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params, timeout=15)
         data = r.json()
         
-        # KCEX داده رو داخل کلید "data" برمی‌گردونه
-        if isinstance(data, dict) and "data" in data:
-            candles = data["data"]
-        elif isinstance(data, list):
-            candles = data
-        else:
-            print(f"KCEX data error {symbol}: {data}")
+        if not isinstance(data, dict) or not data.get("success"):
+            print(f"KCEX error {symbol}: {str(data)[:200]}")
             return None
         
-        if not candles or not isinstance(candles, list):
-            print(f"Empty candles for {symbol}")
+        candles = data.get("data", {})
+        if not candles or "close" not in candles:
+            print(f"No candle data for {symbol}")
             return None
         
-        # ساخت DataFrame - ترتیب ستون‌ها ممکنه فرق کنه
-        df = pd.DataFrame(candles)
-        
-        # پیدا کردن ستون‌ها (KCEX ممکنه اسم‌های مختلفی بده)
-        # معمولاً: [time, open, high, low, close, volume, ...]
-        if len(df.columns) >= 6:
-            df = df.iloc[:, :6]
-            df.columns = ['open_time', 'open', 'high', 'low', 'close', 'volume']
-        else:
-            print(f"Unexpected columns for {symbol}: {df.columns.tolist()}")
-            return None
+        # KCEX داده رو ستونی برمی‌گردونه، تبدیل به DataFrame
+        df = pd.DataFrame({
+            'open_time': candles.get('time', []),
+            'open': candles.get('open', []),
+            'high': candles.get('high', []),
+            'low': candles.get('low', []),
+            'close': candles.get('close', []),
+            'volume': candles.get('vol', [])
+        })
         
         # تبدیل به عدد
         for col in ['open', 'high', 'low', 'close', 'volume']:
             df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        # حذف ردیف‌های خالی و مرتب‌سازی بر اساس زمان (قدیمی به جدید)
+        df = df.dropna().sort_values('open_time').reset_index(drop=True)
         
         return df
     except Exception as e:
@@ -131,7 +125,7 @@ def check_divergence(symbol, df):
 
 def main():
     print("Golden RSI bot started on KCEX...")
-    send_telegram_message("🤖 *Golden RSI bot activated*\n\nExchange: KCEX\nWatching 5m timeframe...")
+    send_telegram_message("🤖 *Golden RSI bot activated*\n\nExchange: *KCEX*\nWatching 5m timeframe...")
 
     last_alert = {}
 
@@ -139,7 +133,7 @@ def main():
         for symbol in SYMBOLS:
             try:
                 df = get_klines(symbol, INTERVAL)
-                if df is None:
+                if df is None or len(df) < RSI_PERIOD + 5:
                     continue
                 signal = check_divergence(symbol, df)
                 current_time = time.time()
