@@ -11,8 +11,20 @@ if not BOT_TOKEN or not CHAT_ID:
     print("Error: BOT_TOKEN and CHAT_ID env vars not set!")
     exit(1)
 
-SYMBOLS = ["SOLUSDT", "ETHUSDT", "DOGEUSDT", "ADAUSDT", "AAVEUSDT"]
-INTERVAL = "5m"
+# لیست ۵۰ ارز برتر (فرمت KCEX با آندرلاین)
+SYMBOLS = [
+    "BTC_USDT", "ETH_USDT", "BNB_USDT", "XRP_USDT", "SOL_USDT",
+    "TRX_USDT", "DOGE_USDT", "ADA_USDT", "LINK_USDT", "XLM_USDT",
+    "BCH_USDT", "LTC_USDT", "AVAX_USDT", "DOT_USDT", "MATIC_USDT",
+    "SHIB_USDT", "UNI_USDT", "ATOM_USDT", "ETC_USDT", "FIL_USDT",
+    "APT_USDT", "ARB_USDT", "OP_USDT", "NEAR_USDT", "INJ_USDT",
+    "SUI_USDT", "SEI_USDT", "TIA_USDT", "AAVE_USDT", "MKR_USDT",
+    "COMP_USDT", "CRV_USDT", "SNX_USDT", "SAND_USDT", "MANA_USDT",
+    "AXS_USDT", "GALA_USDT", "APE_USDT", "CHZ_USDT", "ENJ_USDT",
+    "ZIL_USDT", "ONE_USDT", "ALGO_USDT", "VET_USDT", "ICP_USDT",
+    "FTM_USDT", "EGLD_USDT", "THETA_USDT", "FLOW_USDT", "PEPE_USDT"
+]
+INTERVAL = "Min5"
 RSI_PERIOD = 14
 
 
@@ -32,20 +44,54 @@ def send_telegram_message(message):
 
 
 def get_klines(symbol, interval, limit=100):
-    url = "https://api.binance.com/api/v3/klines"
-    params = {"symbol": symbol, "interval": interval, "limit": limit}
+    """دریافت کندل‌ها از KCEX API"""
+    url = f"https://www.kcex.com/fapi/v1/contract/kline/{symbol}"
+    
+    # KCEX از start و end استفاده می‌کنه، پس محاسبه می‌کنیم
+    end_time = int(time.time())
+    # برای 100 کندل 5 دقیقه‌ای، حدود 8.5 ساعت قبل
+    start_time = end_time - (limit * 5 * 60)
+    
+    params = {
+        "symbol": symbol,
+        "interval": interval,
+        "start": start_time,
+        "end": end_time
+    }
+    
     try:
         r = requests.get(url, params=params, timeout=10)
         data = r.json()
-        if not isinstance(data, list):
-            print(f"Data error {symbol}: {data}")
+        
+        # KCEX داده رو داخل کلید "data" برمی‌گردونه
+        if isinstance(data, dict) and "data" in data:
+            candles = data["data"]
+        elif isinstance(data, list):
+            candles = data
+        else:
+            print(f"KCEX data error {symbol}: {data}")
             return None
-        df = pd.DataFrame(data, columns=[
-            'open_time', 'open', 'high', 'low', 'close', 'volume',
-            'close_time', 'quote_asset_volume', 'number_of_trades',
-            'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
-        ])
-        df['close'] = df['close'].astype(float)
+        
+        if not candles or not isinstance(candles, list):
+            print(f"Empty candles for {symbol}")
+            return None
+        
+        # ساخت DataFrame - ترتیب ستون‌ها ممکنه فرق کنه
+        df = pd.DataFrame(candles)
+        
+        # پیدا کردن ستون‌ها (KCEX ممکنه اسم‌های مختلفی بده)
+        # معمولاً: [time, open, high, low, close, volume, ...]
+        if len(df.columns) >= 6:
+            df = df.iloc[:, :6]
+            df.columns = ['open_time', 'open', 'high', 'low', 'close', 'volume']
+        else:
+            print(f"Unexpected columns for {symbol}: {df.columns.tolist()}")
+            return None
+        
+        # تبدیل به عدد
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        
         return df
     except Exception as e:
         print(f"Fetch error {symbol}: {e}")
@@ -84,8 +130,8 @@ def check_divergence(symbol, df):
 
 
 def main():
-    print("Golden RSI bot started...")
-    send_telegram_message("🤖 *Golden RSI bot activated*\n\nWatching 5m timeframe...")
+    print("Golden RSI bot started on KCEX...")
+    send_telegram_message("🤖 *Golden RSI bot activated*\n\nExchange: KCEX\nWatching 5m timeframe...")
 
     last_alert = {}
 
@@ -112,7 +158,7 @@ def main():
                     msg = (f"{emoji} *{title}*\n"
                            f"━━━━━━━━━━━━━━━\n"
                            f"💱 *Symbol:* {symbol}\n"
-                           f"⏱ *TF:* {INTERVAL}\n"
+                           f"⏱ *TF:* 5m\n"
                            f"💰 *Price:* {price:.4f}\n"
                            f"📊 *RSI:* {rsi_val:.1f}\n"
                            f"🕒 {datetime.now().strftime('%H:%M:%S')}")
